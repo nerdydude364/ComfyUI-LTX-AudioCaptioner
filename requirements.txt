@@ -1,0 +1,5 @@
+# Local transcription engine
+openai-whisper
+
+# Audio analysis (RMS, framing, variance)
+numpy

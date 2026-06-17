@@ -1,0 +1,18 @@
+[project]
+name = "ltx-audiocaptioner"
+description = "Automatically generate captions for audio files."
+version = "1.0.0"
+license = "Apache-2.0"
+dependencies = ["openai-whisper", "numpy"]
+
+[project.urls]
+Repository = "https://github.com/nerdydude364/ComfyUI-LTX-AudioCaptioner"
+Documentation = "https://github.com/nerdydude364/ComfyUI-LTX-AudioCaptioner/wiki"
+"Bug Tracker" = "https://github.com/nerdydude364/ComfyUI-LTX-AudioCaptioner/issues"
+
+[tool.comfy]
+PublisherId = "nerdydude"
+DisplayName = "LTX-AudioCaptioner"
+Icon = "https://nerdydude.net/nerdy.jpg"
+includes = []
+

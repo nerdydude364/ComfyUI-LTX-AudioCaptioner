@@ -19,7 +19,7 @@ class LTX23AudioCaptioner:
                 # Thresholds for singing detection heuristic
                 "avg_segment_length_threshold": ("FLOAT", {"default": 1.8, "min": 0.1, "max": 10.0, "step": 0.1}),
                 "energy_variance_threshold": ("FLOAT", {"default": 0.005, "min": 0.0001, "max": 0.1, "step": 0.0001}),
-                # Audio quality settings (passed to ffmpeg for ambient extraction)
+                # Audio quality settings (passed to ffmpeg for extraction)
                 "audio_channels": (["1", "2"], {"default": "1"}),
                 "audio_sample_rate": (["8000", "16000", "22050", "44100", "48000"], {"default": "16000"}),
                 # Ambient audio RMS thresholds
@@ -41,7 +41,7 @@ class LTX23AudioCaptioner:
     OUTPUT_NODE = True
     CATEGORY = "LTX-2.3 Dataset Tools"
 
-    def analyze_singing_vs_speaking(self, video_path, segments, detect_singing, segment_threshold, variance_threshold, vocal_rms_threshold, window_ms):
+    def analyze_singing_vs_speaking(self, video_path, segments, detect_singing, segment_threshold, variance_threshold, vocal_rms_threshold, window_ms, audio_channels, audio_sample_rate):
         """
         Analyzes whether the vocal performance leans towards singing vs speaking.
         Sustained vowels and continuous high-energy tracking denote singing.
@@ -59,12 +59,12 @@ class LTX23AudioCaptioner:
             avg_segment_length = np.mean(durations) if durations else 0
 
             # Frame the audio into windows to track continuous sound blocks
-            window_size = int(16000 * (window_ms / 1000.0))
+            window_size = int(int(audio_sample_rate) * (window_ms / 1000.0))
 
             # Extract raw audio to analyze sustained acoustic velocity/gaps
             cmd = [
                 'ffmpeg', '-y', '-i', video_path,
-                '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'
+                '-ac', audio_channels, '-ar', audio_sample_rate, '-f', 's16le', 'pipe:1'
             ]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             audio_data, _ = process.communicate()
@@ -95,11 +95,12 @@ class LTX23AudioCaptioner:
         except Exception:
             return "says"
 
-    def get_audio_ambient_type(self, video_path, silence_threshold, low_threshold):
+    def get_audio_ambient_type(self, video_path, silence_threshold, low_threshold, audio_channels, audio_sample_rate):
         try:
+            # Extract raw audio for ambient analysis
             cmd = [
                 'ffmpeg', '-y', '-i', video_path,
-                '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1'
+                '-ac', audio_channels, '-ar', audio_sample_rate, '-f', 's16le', 'pipe:1'
             ]
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             audio_data, _ = process.communicate()
@@ -152,7 +153,8 @@ class LTX23AudioCaptioner:
             vocal_action = self.analyze_singing_vs_speaking(
                 video_path, segments, detect_singing,
                 avg_segment_length_threshold, energy_variance_threshold,
-                vocal_window_rms_threshold, audio_window_ms
+                vocal_window_rms_threshold, audio_window_ms,
+                audio_channels, audio_sample_rate
             )
 
             audio_description = f"{trigger_name} {vocal_action}, '{speech_text}'."
@@ -162,7 +164,10 @@ class LTX23AudioCaptioner:
                     clean_fx = text_low.replace("[", "").replace("]", "").replace("(", "").replace(")", "").strip()
                     audio_description += f" A noticeable sound effect of {clean_fx} is heard."
         else:
-            audio_description = self.get_audio_ambient_type(video_path, silence_rms_threshold, low_rms_threshold)
+            audio_description = self.get_audio_ambient_type(
+                video_path, silence_rms_threshold, low_rms_threshold,
+                audio_channels, audio_sample_rate
+            )
 
         base_caption = visual_caption.strip()
         if not base_caption and os.path.exists(txt_path) and not overwrite_existing:
