@@ -29,6 +29,9 @@ class LTX23AudioCaptioner:
                 "vocal_window_rms_threshold": ("FLOAT", {"default": 0.015, "min": 0.001, "max": 0.5, "step": 0.001}),
                 # Audio window size in milliseconds for RMS analysis
                 "audio_window_ms": ("INT", {"default": 30, "min": 5, "max": 200, "step": 1}),
+                # Music detection thresholds (RMS must exceed this, and spectral flatness must be below tonal_threshold)
+                "music_rms_threshold": ("FLOAT", {"default": 0.1, "min": 0.001, "max": 0.5, "step": 0.001}),
+                "music_tonal_threshold": ("FLOAT", {"default": 0.3, "min": 0.01, "max": 1.0, "step": 0.01}),
             },
             "optional": {
                 "visual_caption": ("STRING", {"forceInput": True, "default": ""}),
@@ -95,7 +98,8 @@ class LTX23AudioCaptioner:
         except Exception:
             return "says"
 
-    def get_audio_ambient_type(self, video_path, silence_threshold, low_threshold, audio_channels, audio_sample_rate):
+    def get_audio_ambient_type(self, video_path, silence_threshold, low_threshold, audio_channels,
+                               audio_sample_rate):
         try:
             # Extract raw audio for ambient analysis
             cmd = [
@@ -120,9 +124,108 @@ class LTX23AudioCaptioner:
         except Exception:
             return "with low ambient background sound."
 
+    def _detect_music(self, audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
+        """
+        Detect whether audio contains music. Returns True/False.
+
+        Strategy: spectral flatness is the primary discriminator.
+        Music → tonal peaks (low flatness). Noise → flat spectrum (high flatness).
+        We then confirm with two lightweight secondary checks so isolated tonal
+        artifacts (e.g. a single sustained note) don't false-positive.
+        """
+        try:
+            rms = np.sqrt(np.mean(audio_np ** 2))
+            print(f"[LTX-AudioCaptioner] DETECT MUSIC: rms={rms} | music_rms_threshold={music_rms_threshold} | music_tonal_threshold={music_tonal_threshold}")
+            if rms < music_rms_threshold:
+                print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (rms < music_rms_threshold)")
+                return False
+
+            fft_vals = np.fft.rfft(audio_np)
+            power = np.maximum(np.abs(fft_vals) ** 2, 1e-12)
+            flatness = float(np.exp(np.mean(np.log(power))) / np.mean(power))
+            freqs = np.fft.rfftfreq(len(audio_np), d=1.0 / sample_rate)
+            centroid = float(np.sum(freqs * power) / np.sum(power))
+            print(f"[LTX-AudioCaptioner] DETECT MUSIC: fft_vals={fft_vals} | power={power} | flatness={flatness} | freqs={freqs} | centroid={centroid}")
+
+            # --- Primary: spectral flatness (harmonic richness) ---
+            if flatness > music_tonal_threshold:
+                print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (flatness > music_tonal_threshold)")
+                return False
+
+            # --- Secondary check 1: harmonic density ---
+            # Music has multiple tonal peaks (partials/harmonics), not just one spike.
+            peaks = (power[1:-1] > power[:-2]) & (power[1:-1] > power[2:])  # local maxima in right-half FFT
+            peak_count = int(np.sum(peaks))
+            print(f"[LTX-AudioCaptioner] DETECT MUSIC: peaks={peaks} | peak_count={peak_count}")
+            # A few isolated peaks can happen in speech (vowels), but music typically has more
+            # We lower the bar — even 10+ peaks is reasonable for music with partials
+            if peak_count < 10:
+                print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (peak_count < 10)")
+                return False
+
+            # --- Secondary check 2: harmonic consistency ---
+            # Check if peaks occur roughly at integer multiples of a fundamental
+            # (i.e. they form a harmonic series).
+            if peak_count >= 4:
+                peak_freqs = freqs[1:-1][peaks]
+                print(f"[LTX-AudioCaptioner] DETECT MUSIC: Continue (peak_count >= 4) | peak_freqs={peak_freqs}")
+                # Look for a fundamental that explains many of these peaks
+                if len(peak_freqs) >= 4:
+                    # Use the lowest peak as a candidate fundamental
+                    f0_cand = peak_freqs[0]
+                    # Check how many peaks are near integer multiples
+                    harmonics_match = sum(
+                        1 for k in range(1, 10)
+                        if np.any(np.abs(peak_freqs - k * f0_cand) < f0_cand * 0.15)
+                    )
+                    print(f"[LTX-AudioCaptioner] DETECT MUSIC: Continue (len(peak_freqs) >= 4) | f0_cand={f0_cand} | harmonics_match={harmonics_match}")
+                    if harmonics_match >= 3:
+                        print(f"[LTX-AudioCaptioner] DETECT MUSIC: True (harmonics_match >= 3) | --->> !MUSIC DETECTED! <<---")
+                        return True
+                # If peak detection alone isn't enough, accept flatness + centroid signals
+                # Music typically has broader energy spread than a pure tone
+                mid_mask = (freqs >= 250) & (freqs < 2000)
+                mid_energy = float(np.sum(power[mid_mask])) if np.any(mid_mask) else 0
+                total = float(np.sum(power)) + 1e-12
+                print(f"[LTX-AudioCaptioner] DETECT MUSIC: Continue (len(peak_freqs) >= 4) | mid_mask={mid_mask} | mid_energy={mid_energy} | total={total}")
+                if mid_energy / total > 0.01:
+                    print(f"[LTX-AudioCaptioner] DETECT MUSIC: True (mid_energy / total > 0.01) | --->> !MUSIC DETECTED! <<---")
+                    return True
+
+            print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (else) (peak_count < 4)")
+            return False
+
+        except Exception as ex:
+            print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (Exception raised: {ex})")
+            return False
+
+    def _get_music_description(self, audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
+        """Run music detection and return a description string, or None if no music."""
+        if self._detect_music(audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
+            return "with music playing."
+        return None
+
+    def _get_music_description_from_video(self, video_path, audio_channels, audio_sample_rate,
+                                           music_rms_threshold, music_tonal_threshold):
+        """Extract audio from a video file and run music detection. Returns a description string or None."""
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-i', video_path,
+                '-ac', audio_channels, '-ar', audio_sample_rate, '-f', 's16le', 'pipe:1'
+            ]
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            audio_data, _ = process.communicate()
+            if not audio_data:
+                return None
+            audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+            return self._get_music_description(audio_np, int(audio_sample_rate), music_rms_threshold, music_tonal_threshold)
+        except Exception:
+            return None
+
     def process_audio_caption(self, video_path, trigger_name, whisper_model_type, overwrite_existing, detect_singing,
                               avg_segment_length_threshold, energy_variance_threshold, audio_channels, audio_sample_rate,
                               silence_rms_threshold, low_rms_threshold, vocal_window_rms_threshold, audio_window_ms,
+                              music_rms_threshold, music_tonal_threshold,
                               visual_caption=""):
         video_path = video_path.strip().strip('"').strip("'").strip('[').strip(']')
 
@@ -163,11 +266,24 @@ class LTX23AudioCaptioner:
                 if "[" in text_low or "(" in text_low:
                     clean_fx = text_low.replace("[", "").replace("]", "").replace("(", "").replace(")", "").strip()
                     audio_description += f" A noticeable sound effect of {clean_fx} is heard."
+            # --- Append music detection (independent of speech) ---
+            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate,
+                                                                  music_rms_threshold, music_tonal_threshold)
+            if music_desc:
+                audio_description += f" The audio is {music_desc}"
         else:
-            audio_description = self.get_audio_ambient_type(
+            ambient_desc = self.get_audio_ambient_type(
                 video_path, silence_rms_threshold, low_rms_threshold,
                 audio_channels, audio_sample_rate
             )
+            audio_description = ambient_desc
+            # --- Append music detection (independent of ambient) ---
+            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate,
+                                                                  music_rms_threshold, music_tonal_threshold)
+            if music_desc:
+                # Don't double up "with music playing." if ambient already covers it
+                if "with music playing" not in audio_description:
+                    audio_description += f" There is {music_desc}"
 
         base_caption = visual_caption.strip()
         if not base_caption and os.path.exists(txt_path) and not overwrite_existing:

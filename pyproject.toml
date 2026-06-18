@@ -1,7 +1,7 @@
 [project]
 name = "ltx-audiocaptioner"
 description = "Automatically generate captions for audio files."
-version = "1.0.0"
+version = "1.1.0"
 license = "Apache-2.0"
 dependencies = ["openai-whisper", "numpy"]
 
