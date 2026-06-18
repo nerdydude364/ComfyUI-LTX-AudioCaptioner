@@ -154,7 +154,7 @@ class LTX23AudioCaptioner:
 
             # --- Secondary check 1: harmonic density ---
             # Music has multiple tonal peaks (partials/harmonics), not just one spike.
-            peaks = (power[1:] > power[:-1]) & (power[1:] > power[2:])  # local maxima in right-half FFT
+            peaks = (power[1:-1] > power[:-2]) & (power[1:-1] > power[2:])  # local maxima in right-half FFT
             peak_count = int(np.sum(peaks))
             print(f"[LTX-AudioCaptioner] DETECT MUSIC: peaks={peaks} | peak_count={peak_count}")
             # A few isolated peaks can happen in speech (vowels), but music typically has more
@@ -167,7 +167,7 @@ class LTX23AudioCaptioner:
             # Check if peaks occur roughly at integer multiples of a fundamental
             # (i.e. they form a harmonic series).
             if peak_count >= 4:
-                peak_freqs = freqs[1:][peaks]
+                peak_freqs = freqs[1:-1][peaks]
                 print(f"[LTX-AudioCaptioner] DETECT MUSIC: Continue (peak_count >= 4) | peak_freqs={peak_freqs}")
                 # Look for a fundamental that explains many of these peaks
                 if len(peak_freqs) >= 4:
