@@ -30,8 +30,8 @@ class LTX23AudioCaptioner:
                 # Audio window size in milliseconds for RMS analysis
                 "audio_window_ms": ("INT", {"default": 30, "min": 5, "max": 200, "step": 1}),
                 # Music detection thresholds (RMS must exceed this, and spectral flatness must be below tonal_threshold)
-                "music_rms_threshold": ("FLOAT", {"default": 0.005, "min": 0.001, "max": 0.5, "step": 0.001}),
-                "music_tonal_threshold": ("FLOAT", {"default": 0.25, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "music_rms_threshold": ("FLOAT", {"default": 0.1, "min": 0.001, "max": 0.5, "step": 0.001}),
+                "music_tonal_threshold": ("FLOAT", {"default": 0.3, "min": 0.01, "max": 1.0, "step": 0.01}),
             },
             "optional": {
                 "visual_caption": ("STRING", {"forceInput": True, "default": ""}),
