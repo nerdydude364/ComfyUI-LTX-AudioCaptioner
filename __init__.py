@@ -124,7 +124,7 @@ class LTX23AudioCaptioner:
         except Exception:
             return "with low ambient background sound."
 
-    def _detect_music(self, audio_np, sample_rate):
+    def _detect_music(self, audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
         """
         Detect whether audio contains music. Returns True/False.
 
@@ -199,13 +199,14 @@ class LTX23AudioCaptioner:
             print(f"[LTX-AudioCaptioner] DETECT MUSIC: False (Exception raised: {ex})")
             return False
 
-    def _get_music_description(self, audio_np, sample_rate):
+    def _get_music_description(self, audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
         """Run music detection and return a description string, or None if no music."""
-        if self._detect_music(audio_np, sample_rate):
+        if self._detect_music(audio_np, sample_rate, music_rms_threshold, music_tonal_threshold):
             return "with music playing."
         return None
 
-    def _get_music_description_from_video(self, video_path, audio_channels, audio_sample_rate):
+    def _get_music_description_from_video(self, video_path, audio_channels, audio_sample_rate,
+                                           music_rms_threshold, music_tonal_threshold):
         """Extract audio from a video file and run music detection. Returns a description string or None."""
         try:
             cmd = [
@@ -217,7 +218,7 @@ class LTX23AudioCaptioner:
             if not audio_data:
                 return None
             audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-            return self._get_music_description(audio_np, int(audio_sample_rate))
+            return self._get_music_description(audio_np, int(audio_sample_rate), music_rms_threshold, music_tonal_threshold)
         except Exception:
             return None
 
@@ -266,7 +267,8 @@ class LTX23AudioCaptioner:
                     clean_fx = text_low.replace("[", "").replace("]", "").replace("(", "").replace(")", "").strip()
                     audio_description += f" A noticeable sound effect of {clean_fx} is heard."
             # --- Append music detection (independent of speech) ---
-            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate)
+            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate,
+                                                                  music_rms_threshold, music_tonal_threshold)
             if music_desc:
                 audio_description += f" The audio is {music_desc}"
         else:
@@ -276,7 +278,8 @@ class LTX23AudioCaptioner:
             )
             audio_description = ambient_desc
             # --- Append music detection (independent of ambient) ---
-            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate)
+            music_desc = self._get_music_description_from_video(video_path, audio_channels, audio_sample_rate,
+                                                                  music_rms_threshold, music_tonal_threshold)
             if music_desc:
                 # Don't double up "with music playing." if ambient already covers it
                 if "with music playing" not in audio_description:
